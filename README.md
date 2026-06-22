@@ -131,3 +131,89 @@ streamlit run app.py
 *   **GPU Offloading:** Ensure Ollama utilizes your discrete GPU if available. Ollama handles GPU offloading automatically, but you can check resource consumption with `nvidia-smi` (on NVIDIA hardware).
 *   **Model Parameter Sizes:** Llama 3.2 3B is highly optimized for consumer hardware. If your workstation has limited memory (e.g. less than 8GB RAM), consider switching to `gemma2:2b` or `phi3:latest`.
 *   **Context Window Limitations:** Ensure `num_ctx` is set appropriately in your `ChatOllama` configurations (default is 2048 tokens). RAG systems with long context windows (e.g., retrieving 10+ chunks) may experience performance slowdowns on CPU.
+---
+
+## ?? Benchmarking Guide
+
+This repository is designed to measure both **raw model inference performance** and **end-to-end RAG performance**. The difference matters:
+
+*   **Raw model inference** answers: "How fast does the LLM generate text?"
+*   **RAG benchmark** answers: "How fast can the full system retrieve context, generate an answer, and stay grounded in our documents?"
+
+### Core Metrics
+
+*   **Time to First Token (TTFT):** Time from request start until the first generated token is available.
+*   **Tokens per Second (TPS):** Generation throughput after the first token.
+*   **Total Latency:** End-to-end wall-clock time for a request.
+*   **Retrieval Latency:** Time spent fetching context from ChromaDB and optional reranking.
+*   **Generation Latency:** Time spent in the LLM call itself.
+*   **Quality Scores:** Faithfulness and answer relevance from the local LLM-as-a-judge workflow.
+
+### What The Current App Measures
+
+The Streamlit benchmark in [`app.py`](app.py) currently reports:
+
+*   Retrieved context from the local vector store
+*   LLM answer generation
+*   Total generation latency for the answer call
+*   Faithfulness and relevance scores
+
+It does **not yet** separate TTFT from full completion time, and it does not yet compute tokens/sec.
+
+### Why Use Your Docs In The Benchmark
+
+Including your own documentation makes the benchmark more useful because it measures the system against real production-style inputs. That gives you two different views:
+
+*   **Model-only speed:** Best for isolating Ollama/model performance.
+*   **Docs-backed RAG speed:** Best for measuring the user-facing experience of your app.
+
+For the most rigorous comparison, benchmark both:
+
+1. A prompt-only run with no retrieved context
+2. A docs-grounded RAG run using `docs/`
+
+That lets you see whether slower performance comes from the model, retrieval, reranking, or context size.
+
+### Recommended Benchmark Output
+
+When you extend the benchmark tab, the most useful metrics to display are:
+
+*   `TTFT`
+*   `tokens/sec`
+*   `total latency`
+*   `retrieval latency`
+*   `generation latency`
+*   `faithfulness`
+*   `relevance`
+
+If you want, this README section can be paired with a small benchmark script or an expanded Tab 3 in the app so the metrics are collected automatically.
+
+### Sample Benchmarks
+
+The Streamlit benchmark tab is easiest to interpret when you reuse a small set of repeatable prompts. A good starter set is:
+
+*   **Tesla revenue model:** `How does Tesla make money?`
+*   **Microsoft acquisition:** `How much did Microsoft pay to acquire GitHub?`
+*   **Prompt-only baseline:** `Explain retrieval augmented generation in one paragraph.`
+
+These are useful because they cover both:
+
+*   **Docs-grounded RAG cases** where the answer should be supported by your indexed documents
+*   **Prompt-only baseline cases** where you can isolate the raw LLM generation speed
+
+That combination makes it easier to spot regressions in retrieval quality, generation latency, or throughput over time.
+
+### Observed Benchmark Example
+
+On the current sample run shown in the app, we observed:
+
+*   `TTFT`: about `8121 ms`
+*   `Generation latency`: about `31691 ms`
+*   `Retrieval latency`: about `140 ms`
+*   `Total latency`: about `31832 ms`
+*   `Tokens/sec`: about `7.60`
+*   `Output tokens`: about `178`
+*   `Faithfulness`: about `80.0%`
+*   `Relevance`: about `80.0%`
+
+These numbers are useful as a baseline for the current local hardware, model, and document set. They should be treated as a reference point rather than a universal score, since they will change with model choice, context size, reranking, and machine load.

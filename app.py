@@ -2,6 +2,7 @@ import streamlit as st
 import os
 import re
 import time
+from typing import Optional
 from langchain_chroma import Chroma
 from langchain_ollama import OllamaEmbeddings, ChatOllama
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -181,6 +182,45 @@ def get_pdf_pages(file_path):
         return pages
     except Exception as e:
         return [f"Error reading PDF: {str(e)}"]
+
+
+def _extract_ollama_usage(message):
+    """Pull token counts from Ollama metadata when available."""
+    metadata = getattr(message, "response_metadata", {}) or {}
+    return {
+        "eval_count": metadata.get("eval_count"),
+        "prompt_eval_count": metadata.get("prompt_eval_count"),
+        "eval_duration": metadata.get("eval_duration"),
+        "prompt_eval_duration": metadata.get("prompt_eval_duration"),
+    }
+
+
+def run_streaming_generation(llm, prompt):
+    """Measure TTFT and total generation time using streamed chunks."""
+    start_time = time.perf_counter()
+    first_token_time = None
+    chunks = []
+    last_message = None
+
+    for chunk in llm.stream(prompt):
+        if first_token_time is None and getattr(chunk, "content", ""):
+            first_token_time = time.perf_counter()
+        if getattr(chunk, "content", ""):
+            chunks.append(chunk.content)
+        last_message = chunk
+
+    end_time = time.perf_counter()
+    response_text = "".join(chunks).strip()
+    ttft = (first_token_time - start_time) if first_token_time else None
+    total_latency = end_time - start_time
+    usage = _extract_ollama_usage(last_message) if last_message else {}
+    return response_text, ttft, total_latency, usage
+
+
+def estimate_tokens_from_text(text):
+    return len(re.findall(r"\S+", text.strip())) if text.strip() else 0
+
+
 
 
 # --- TABS LAYOUT ---
@@ -418,95 +458,126 @@ with tab_retrieve:
 # --- TAB 3: BENCHMARK & GENERATION ---
 with tab_benchmark:
     st.markdown("## Answer Generation & Local Evaluation")
-    st.write("Generate answers to your questions and benchmark the pipeline's performance (Faithfulness, Relevance, Latency) using an LLM-as-a-judge.")
-    
-    bench_query = st.text_input("Enter Question for End-to-End Test...", "How does Tesla make money?", key="bench_query")
-    btn_run_rag = st.button("🚀 Run Pipeline and Grade Output")
-    
+    st.write("Measure model speed and end-to-end RAG performance with TTFT, throughput, latency, and local judge scores.")
+
+    bench_query = st.text_input("Enter Question for Benchmarking...", "How does Tesla make money?", key="bench_query")
+    benchmark_mode = st.selectbox(
+        "Benchmark Mode",
+        ["Docs-grounded RAG", "Prompt-only model"],
+        index=0,
+        help="Docs-grounded RAG measures retrieval + generation. Prompt-only isolates the model."
+    )
+    btn_run_rag = st.button("Run Benchmark")
+
     if btn_run_rag and bench_query:
         persistent_directory = "db/chroma_db"
-        if not os.path.exists(persistent_directory):
-            st.warning("Please verify your Chroma DB contains indexed company documents first.")
-        else:
+        status_box = st.empty()
+        llm = get_llm()
+
+        docs = []
+        context = ""
+        retrieval_latency = 0.0
+
+        if benchmark_mode == "Docs-grounded RAG":
+            if not os.path.exists(persistent_directory):
+                st.warning("Please verify your Chroma DB contains indexed documents first.")
+                st.stop()
+
             db_instance = Chroma(
                 persist_directory=persistent_directory,
                 embedding_function=get_embedding_model(),
                 collection_metadata={"hnsw:space": "cosine"}
             )
-            
-            # 1. Retrieve
-            st.markdown("### 1. In-Progress Log")
-            status_box = st.empty()
-            
-            status_box.info("🔍 Fetching relevant context from local vector store...")
+
+            status_box.info("Fetching relevant context from local vector store...")
+            retrieve_start = time.perf_counter()
             retriever = db_instance.as_retriever(search_kwargs={"k": 3})
             docs = retriever.invoke(bench_query)
+            retrieval_latency = time.perf_counter() - retrieve_start
             context = "\n".join([doc.page_content for doc in docs])
-            
-            # 2. Generate
-            status_box.info("🤖 Generating answer using local LLM...")
-            start_time = time.time()
-            llm = get_llm()
-            
+
+        status_box.info("Generating answer using local LLM...")
+        if benchmark_mode == "Docs-grounded RAG":
             combined_input = f"""Based on the following documents, please answer this question: {bench_query}
-            
-            Context:
-            {context}
-            
-            Answer:"""
-            
-            response = llm.invoke(combined_input).content
-            latency = time.time() - start_time
-            status_box.success("✅ RAG pipeline complete!")
-            
-            # Display results
-            col_ans, col_stats = st.columns([2, 1])
-            
-            with col_ans:
-                st.markdown("### Generated Response")
-                st.markdown(f"""
-                <div class="rag-card" style="background:rgba(15,23,42,0.6); border:1px solid rgba(0,242,254,0.25);">
-                    <p style="font-size:1.05rem; line-height:1.6; white-space: pre-wrap;">{response.strip()}</p>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                # Context foldout
-                with st.expander("Show Retrieved Context Chunks"):
+
+Context:
+{context}
+
+Answer:"""
+        else:
+            combined_input = f"""Please answer this question directly and concisely: {bench_query}
+
+Answer:"""
+
+        response, ttft, gen_latency, usage = run_streaming_generation(llm, combined_input)
+        total_latency = retrieval_latency + gen_latency
+        status_box.success("Benchmark run complete!")
+
+        eval_eval_count = usage.get("eval_count")
+        if eval_eval_count is not None and usage.get("eval_duration"):
+            tokens_per_sec = eval_eval_count / (usage["eval_duration"] / 1_000_000_000)
+            output_tokens = eval_eval_count
+        else:
+            output_tokens = estimate_tokens_from_text(response)
+            tokens_per_sec = output_tokens / gen_latency if gen_latency > 0 else 0.0
+
+        ttft_ms = (ttft * 1000) if ttft is not None else None
+        gen_ms = gen_latency * 1000
+        total_ms = total_latency * 1000
+        retrieval_ms = retrieval_latency * 1000
+
+        col_ans, col_stats = st.columns([2, 1])
+
+        with col_ans:
+            st.markdown("### Generated Response")
+            st.markdown(f"""
+            <div class="rag-card" style="background:rgba(15,23,42,0.6); border:1px solid rgba(0,242,254,0.25);">
+                <p style="font-size:1.05rem; line-height:1.6; white-space: pre-wrap;">{response.strip()}</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+            with st.expander("Show Retrieved Context Chunks"):
+                if docs:
                     for d_idx, doc in enumerate(docs, 1):
                         st.markdown(f"**Chunk {d_idx} (Source: {doc.metadata.get('source','Unknown')}):**")
                         st.write(doc.page_content)
                         st.markdown("---")
-                        
-            with col_stats:
-                st.markdown("### Pipeline Benchmarks")
-                
-                # Grade outputs with LLM-as-a-judge
-                with st.spinner("Judge is grading the response (Faithfulness & Relevance)..."):
-                    # Faithfulness
-                    faith_prompt = f"""Determine if the Answer is fully supported by the Context.
-                    Context: {context}
-                    Answer: {response}
-                    Output a Score exactly as: Score: [float between 0.0 and 1.0]"""
-                    faith_grade = llm.invoke(faith_prompt).content
-                    f_match = re.search(r"Score:\s*(0\.\d+|1\.0|0)", faith_grade)
-                    f_score = float(f_match.group(1)) if f_match else 0.8
-                    
-                    # Relevance
-                    rel_prompt = f"""Determine if the Answer directly addresses the Question.
-                    Question: {bench_query}
-                    Answer: {response}
-                    Output a Score exactly as: Score: [float between 0.0 and 1.0]"""
-                    rel_grade = llm.invoke(rel_prompt).content
-                    r_match = re.search(r"Score:\s*(0\.\d+|1\.0|0)", rel_grade)
-                    r_score = float(r_match.group(1)) if r_match else 0.8
-                    
-                st.metric("Pipeline Latency", f"{latency:.2f} seconds")
-                st.metric("Faithfulness Score (Groundedness)", f"{f_score * 100:.1f} %")
-                st.metric("Answer Relevance Score", f"{r_score * 100:.1f} %")
-                
-                if f_score > 0.9 and r_score > 0.85:
-                    st.success("🟢 Highly optimal answer generated locally with no hallucinations detected.")
-                elif f_score < 0.7:
-                    st.error("🔴 Hallucination warning: Some generated statements are unsupported by retrieved context.")
                 else:
-                    st.warning("🟡 Suboptimal answer: Check relevancy or expand the candidate window size.")
+                    st.info("Prompt-only mode does not retrieve documents.")
+
+        with col_stats:
+            st.markdown("### Pipeline Benchmarks")
+            st.metric("TTFT", f"{ttft_ms:.0f} ms" if ttft_ms is not None else "N/A")
+            st.metric("Generation Latency", f"{gen_ms:.0f} ms")
+            st.metric("Retrieval Latency", f"{retrieval_ms:.0f} ms")
+            st.metric("Total Latency", f"{total_ms:.0f} ms")
+            st.metric("Tokens / Second", f"{tokens_per_sec:.2f}")
+            st.metric("Output Tokens", f"{output_tokens}")
+
+            judge_context = context if context else response
+            with st.spinner("Judge is grading the response (Faithfulness & Relevance)..."):
+                faith_prompt = f"""Determine if the Answer is fully supported by the Context.
+Context: {judge_context}
+Answer: {response}
+Output a Score exactly as: Score: [float between 0.0 and 1.0]"""
+                faith_grade = llm.invoke(faith_prompt).content
+                f_match = re.search(r"Score:\s*(0\.\d+|1\.0|0)", faith_grade)
+                f_score = float(f_match.group(1)) if f_match else 0.8
+
+                rel_prompt = f"""Determine if the Answer directly addresses the Question.
+Question: {bench_query}
+Answer: {response}
+Output a Score exactly as: Score: [float between 0.0 and 1.0]"""
+                rel_grade = llm.invoke(rel_prompt).content
+                r_match = re.search(r"Score:\s*(0\.\d+|1\.0|0)", rel_grade)
+                r_score = float(r_match.group(1)) if r_match else 0.8
+
+            st.metric("Faithfulness Score (Groundedness)", f"{f_score * 100:.1f} %")
+            st.metric("Answer Relevance Score", f"{r_score * 100:.1f} %")
+
+            if f_score > 0.9 and r_score > 0.85:
+                st.success("Highly optimal answer generated locally with no hallucinations detected.")
+            elif f_score < 0.7:
+                st.error("Hallucination warning: Some generated statements are unsupported by retrieved context.")
+            else:
+                st.warning("Suboptimal answer: Check relevancy or expand the candidate window size.")
