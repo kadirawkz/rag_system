@@ -53,25 +53,6 @@ coverage.xml
 *.mo
 *.pot
 
-# Django stuff:
-*.log
-local_settings.py
-db.sqlite3
-db.sqlite3-journal
-
-# Flask stuff:
-instance/
-.webassets-cache
-
-# Scrapy stuff:
-.scrapy
-
-# Sphinx documentation
-docs/_build/
-
-# PyBuilder
-target/
-
 # Jupyter Notebook
 .ipynb_checkpoints
 */.ipynb_checkpoints
@@ -134,11 +115,9 @@ Thumbs.db
 
 # Data files
 *.csv
-*.json
 *.parquet
 data/
 cache/
-downloads/
 
 # Model files
 *.pkl
@@ -153,6 +132,30 @@ checkpoints/
 .env.local
 .env.*.local
 
-# Databases
+# Databases / Vector stores
 db/
 
+# --- Project-specific ---
+
+# FlashRank downloads its ONNX model files at runtime into a local cache
+flashrank_cache/
+ms-marco-*/
+
+# Streamlit
+.streamlit/secrets.toml
+.streamlit/
+
+# Generated / synthetic data files
+synthetic_questions.txt
+evaluation_results*.json
+benchmark_results*.json
+
+# Logs
+*.log
+logs/
+
+# Uploaded docs (keep docs/ structure but ignore user content)
+docs/*.txt
+docs/*.pdf
+docs/*.docx
+!docs/.gitkeep

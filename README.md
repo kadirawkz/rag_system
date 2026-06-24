@@ -108,13 +108,13 @@ Initialize a virtual environment and install dependencies listed in `requirement
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/local-rag-explorer.git
-cd local-rag-explorer
+git clone https://github.com/kadirawkz/rag_system.git
+cd rag_system
 
 # Create & activate virtualenv
-python -m venv venv
-venv\Scripts\activate  # Windows
-source venv/bin/activate  # macOS/Linux
+python -m venv .venv
+.venv\Scripts\activate  # Windows
+source .venv/bin/activate  # macOS/Linux
 
 # Install requirements
 pip install -r requirements.txt
@@ -138,6 +138,24 @@ streamlit run app.py
 
 ---
 
+## 🔑 Key Dependencies
+
+| Package | Version | Role |
+| :--- | :--- | :--- |
+| `langchain` | 0.3.27 | Core orchestration framework |
+| `langchain-community` | 0.3.29 | BM25, FlashRank, loaders |
+| `langchain-experimental` | 0.3.4 | `SemanticChunker` text splitter |
+| `langchain-ollama` | 0.2.3 | Local Ollama embeddings & chat |
+| `langchain-chroma` | 0.2.5 | ChromaDB vector store integration |
+| `chromadb` | 1.0.20 | Persistent vector database |
+| `flashrank` | 0.2.8 | ONNX CPU reranker (ms-marco) |
+| `streamlit` | 1.46.1 | Interactive web dashboard |
+| `ollama` | — | Local LLM inference runtime |
+
+> All LangChain packages are pinned to the `0.3.x` ecosystem (`langchain-core==0.3.75`).
+
+---
+
 ## 📈 Performance & VRAM Optimization Tips
 
 * **GPU Offloading:** Ensure Ollama utilizes your discrete GPU if available. Ollama handles GPU offloading automatically, but you can check resource consumption with `nvidia-smi` (on NVIDIA hardware).
@@ -146,7 +164,7 @@ streamlit run app.py
 
 ---
 
-## ?? Benchmarking Guide
+## 🔍 Benchmarking Guide
 
 This repository is designed to measure both **raw model inference performance** and **end-to-end RAG performance**. The difference matters:
 
