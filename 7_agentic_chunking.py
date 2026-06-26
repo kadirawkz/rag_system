@@ -31,12 +31,14 @@ Rules:
 - Each chunk should be around 200 characters or less
 - Split at natural topic boundaries
 - Keep related information together
+- Produce 3 to 8 chunks when possible
 - Put "<<<SPLIT>>>" between chunks
+- Do not summarize, rewrite, or drop any text
 
 Text:
 {tesla_text}
 
-Return the text with <<<SPLIT>>> markers where you want to split:
+Return only the chunked text with <<<SPLIT>>> markers where you want to split:
 """
 
 # Get AI response

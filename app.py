@@ -8,7 +8,7 @@ from langchain_ollama import OllamaEmbeddings, ChatOllama
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_experimental.text_splitter import SemanticChunker
 from langchain_community.retrievers import BM25Retriever
-from langchain.retrievers import EnsembleRetriever
+from langchain_classic.retrievers.ensemble import EnsembleRetriever
 from langchain_community.document_compressors.flashrank_rerank import FlashrankRerank
 from langchain_core.documents import Document
 from collections import defaultdict
@@ -170,6 +170,28 @@ def split_into_sentences(text):
     sentences = re.split(r'(?<=[.!?])\s+', text.strip())
     return [s.strip() for s in sentences if s.strip()]
 
+
+def parse_agentic_chunks(response_text: str, raw_text: str):
+    """
+    Extract chunk boundaries from an LLM response.
+
+    Supports:
+    - <<<SPLIT>>> markers
+    - numbered/bulleted chunk lists
+    - plain text fallback when the model ignores formatting
+    """
+    if "<<<SPLIT>>>" in response_text:
+        chunks = [chunk.strip() for chunk in response_text.split("<<<SPLIT>>>") if chunk.strip()]
+        if len(chunks) > 1:
+            return chunks
+
+    numbered = re.split(r'\n\s*(?:\d+[\).\:-]|[-*])\s+', response_text.strip())
+    numbered = [chunk.strip() for chunk in numbered if chunk.strip()]
+    if len(numbered) > 1:
+        return numbered
+
+    return [raw_text.strip()] if raw_text.strip() else []
+
 @st.cache_data
 def get_pdf_pages(file_path):
     from pypdf import PdfReader
@@ -329,14 +351,16 @@ with tab_ingest:
                     Rules:
                     - Split at natural topic boundaries
                     - Keep related information together
+                    - Produce 3 to 8 chunks when possible
                     - Put "<<<SPLIT>>>" between chunks
+                    - Do not summarize, rewrite, or drop any text
                     
                     Text:
                     {raw_text}
                     
-                    Return the text with <<<SPLIT>>> markers:"""
+                    Return only the chunked text with <<<SPLIT>>> markers:"""
                     response = llm.invoke(prompt).content
-                    splits = [chunk.strip() for chunk in response.split("<<<SPLIT>>>") if chunk.strip()]
+                    splits = parse_agentic_chunks(response, raw_text)
                     for i, split in enumerate(splits):
                         st.session_state.chunks.append(Document(page_content=split, metadata={"chunk_index": i}))
             
@@ -581,3 +605,4 @@ Output a Score exactly as: Score: [float between 0.0 and 1.0]"""
                 st.error("Hallucination warning: Some generated statements are unsupported by retrieved context.")
             else:
                 st.warning("Suboptimal answer: Check relevancy or expand the candidate window size.")
+

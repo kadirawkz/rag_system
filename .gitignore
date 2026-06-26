@@ -56,6 +56,7 @@ coverage.xml
 # Jupyter Notebook
 .ipynb_checkpoints
 */.ipynb_checkpoints
+*.ipynb_checkpoints
 
 # IPython
 profile_default/
@@ -79,7 +80,7 @@ celerybeat.pid
 
 # Environments
 .env
-.venv
+.venv/
 env/
 venv/
 ENV/
@@ -118,6 +119,8 @@ Thumbs.db
 *.parquet
 data/
 cache/
+rag_results.json
+chunks_export.json
 
 # Model files
 *.pkl
@@ -134,6 +137,8 @@ checkpoints/
 
 # Databases / Vector stores
 db/
+dbv1/
+dbv2/
 
 # --- Project-specific ---
 
@@ -149,6 +154,8 @@ ms-marco-*/
 synthetic_questions.txt
 evaluation_results*.json
 benchmark_results*.json
+rag_results*.json
+chunks_export*.json
 
 # Logs
 *.log
